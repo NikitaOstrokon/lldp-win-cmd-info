@@ -11,14 +11,37 @@ namespace lldp
 {
     class Program
     {
+        static bool opt_json = false;
+        static bool opt_quit = false;
+
 
         static void Main(string[] args)
         {
-            // Print version
-            string build = "1";
-            string ver = SharpPcap.Version.VersionString;
-            Console.WriteLine("LLDPspy build {0} using lib v{1} 2017 M.Götze\n", build, ver);
 
+
+            // Check commandline
+            if (args.Length > 0)
+            {
+                foreach (string arg in args)
+                {
+                    lldp.Program.opt_json = lldp.Program.opt_json || arg == "/j";
+                    lldp.Program.opt_quit = lldp.Program.opt_quit || arg == "/q";
+                }
+            }
+            
+            
+
+            // Print version
+            string build = "2017-09-11";
+            string ver = SharpPcap.Version.VersionString;
+            if (opt_json != true)
+            {
+                Console.WriteLine("LLDPspy build {0} using lib v{1} 2017 Marco Götze, planetlan\n", build, ver);
+                Console.WriteLine("\n\n\toptional parameters:\n");
+                Console.WriteLine("\t/j\tOutput as JSON string\n\t/q\tQuit after first TLV received\n\n\tBest Usage for reuse of information lldp /j /q\n\n");
+            }
+            //if (opt_json == true) Console.WriteLine("JSON");
+            //if (opt_quit == true) Console.WriteLine("QUIT");
             // Retrieve the device list
             // TODO: add try
             try
@@ -27,7 +50,8 @@ namespace lldp
                 // If no devices were found print an error
                 if (devices.Count < 1)
                 {
-                    Console.WriteLine("Sorry, can't continue, no usable devices were found on this machine!\n");
+                    if (opt_json == true)   Console.WriteLine("{\"error\":\"no usable devices found\",\"number\": 1}");
+                    else                    Console.WriteLine("ERROR 1: Sorry, can't continue, no usable devices were found on this machine!\n");
                     return;
                 }
                 // Mapping so we only get used interfaces not filtered
@@ -47,7 +71,7 @@ namespace lldp
                         && dev.Description.Contains("'Microsoft'") == false
                         && dev.Description.Contains("loop") == false)
                     {
-                        Console.WriteLine("{0}) {1}", x, dev.Description);
+                        if (opt_json != true) Console.WriteLine("{0}) {1}", x, dev.Description);
                         ix_map[x] = i;
                         x++;
                     }
@@ -55,25 +79,38 @@ namespace lldp
                 }
                 if (x < 1)
                 {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine("No useable Adapter found!");
-                    Console.ForegroundColor = ConsoleColor.White;
-                    Environment.Exit(1);
+                    if (opt_json == true) Console.WriteLine("{\"error\":\"no usable adapter found\",\"number\": 2}");
+                    else
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine("No useable Adapter found!");
+                        Console.ForegroundColor = ConsoleColor.White;
+                        Environment.Exit(1);
+                    }
+                        
                 }
                 else if (x > 1)
                 {
                     // Selection because > 1
-                    Console.WriteLine("Found: " + x.ToString());
-                    Console.WriteLine();
-                    Console.Write("your choice? ");
-                    if (int.TryParse(Console.ReadLine(), out x))
+                    if (opt_json == true)
                     {
-                        // ok 
+                        x = 0;
                     }
                     else
                     {
-                        Console.WriteLine("Sorry, invalid Input!\n");
+                        Console.WriteLine("Found: " + x.ToString());
+                        Console.WriteLine();
+                        Console.Write("your choice? ");
+                        if (int.TryParse(Console.ReadLine(), out x))
+                        {
+                            // ok 
+                        }
+                        else
+                        {
+                            Console.WriteLine("Sorry, invalid Input!\n");
+                        }
                     }
+                    
                 }
                 else
                 {
@@ -93,13 +130,13 @@ namespace lldp
                 // tcpdump filter to capture only TCP/IP packets for LLDP and CDP
                 string filter = "ether[12:2]=0x88cc or ether[20:2]=0x2000";
                 device.Filter = filter;
-
-                Console.WriteLine();
-                //Console.WriteLine("-- The following tcpdump filter will be applied: \"{0}\"",filter);
-                Console.WriteLine
-                    ("-- Listening on {0}, hit 'Ctrl-C' to exit...",
-                    device.Description);
-
+                if (opt_json != true)
+                {
+                    Console.WriteLine();
+                    //Console.WriteLine("-- The following tcpdump filter will be applied: \"{0}\"",filter);
+                    Console.WriteLine("-- Listening on {0}, hit 'Ctrl-C' to exit...", device.Description);
+                }
+                    
                 // Start capture packets
                 device.Capture();
 
@@ -107,60 +144,128 @@ namespace lldp
                 // (Note: this line will never be called since
                 //  we're capturing infinite number of packets
                 device.Close();
-            } catch
+            } catch (Exception e)
             {
-                Console.WriteLine("WinPCAP library is missing, please install from: https://www.winpcap.org\n");
-                Environment.Exit(1);
+                if (opt_json == true) Console.WriteLine("{\"error\":\""+e.ToString()+"\",\"number\": 999}");
+                else
+                {
+                    Console.WriteLine("WinPCAP library is missing, please install from:");
+                    Console.WriteLine("      win10x64:\thttps://www.winpcap.org");
+                    Console.WriteLine("      other:\thttps://www.winpcap.org\n");
+                    Environment.Exit(1);
+                }
             }
 
            
        }
 
-        
+        static string clean4json(string payload)
+        {
+            payload.Replace("\"", "");
+            payload.Replace("\n", " ");
+            payload.Replace("'", "");
+            payload.Replace("\r", "");
+            return payload.Trim();
+        }
 
         /// <summary>
         /// Prints the time and length of each received packet
         /// </summary>
-        private static void device_OnPacketArrival(object sender, CaptureEventArgs e)
+        static void device_OnPacketArrival(object sender, CaptureEventArgs e)
         {
             var time = DateTime.Now;
             var len = e.Packet.Data.Length;
             var packet = PacketDotNet.Packet.ParsePacket(e.Packet.LinkLayerType, e.Packet.Data);
             var LLDPPacket = (PacketDotNet.LLDPPacket)packet.Extract(typeof(PacketDotNet.LLDPPacket));
+            string[] results = new string[5];// 0: TLVs, 1: name, 2: port, 3: description, 4: chassisID
+            results[0] = ""; // TLVs
+            results[1] = ""; // name
+            results[2] = ""; // port
+            results[3] = ""; // desciption
+            results[4] = ""; // chassisid
+ 
+ 
             if (LLDPPacket != null)
             {
                 //  TLVs={ChassisID|PortID|TimeToLive|PortDescription|SystemName|SystemDescription|SystemCapabilities|ManagementAddress|OrganizationSpecific|OrganizationSpecific|EndOfLLDPDU}
                 int TLVs = Convert.ToInt16(LLDPPacket.TlvCollection.Count.ToString());
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine("{0}:{1}:{2} LLDP Packet received with {5} TLVs",
-                time.Hour, time.Minute, time.Second, time.Millisecond, len, TLVs);
-                Console.ForegroundColor = ConsoleColor.White;
+                
+                if(lldp.Program.opt_json != true)
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine("{0}:{1}:{2} LLDP Packet received with {5} TLVs",
+                    time.Hour, time.Minute, time.Second, time.Millisecond, len, TLVs);
+                    //results[0] = TLVs.ToString();
+                    Console.ForegroundColor = ConsoleColor.White;
+                }
+                
                 foreach (TLV tlv in LLDPPacket.TlvCollection)
                 {
                     //Console.WriteLine("Type: " + tlv.GetType().ToString()); // + "=\t" + tlv.ToString());
-                            // PacketDotNet.LLDP.PortDescription
-                            if (tlv.GetType().Equals(typeof(PortDescription)))
+                    // PacketDotNet.LLDP.PortDescription
+                    /*Console.WriteLine(tlv.GetType().ToString());
+                    if (tlv.GetType().Equals(typeof(OrganizationSpecific)))
+                    {
+                        Console.ForegroundColor = ConsoleColor.Cyan;
+                        Console.WriteLine("o: " + ((OrganizationSpecific)tlv).ToString());
+                        Console.ForegroundColor = ConsoleColor.White;
+                    }
+                    */
+                            // MAC Switch
+                            if (tlv.GetType().Equals(typeof(ChassisID)))
+                            {
+                                if (opt_json != true)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Cyan;
+                                    Console.WriteLine("ChassisID: " + ((ChassisID)tlv).ToString());
+                                    //Console.WriteLine("ChassisID: " +  ChassisSubTypes.MACAddress.ToString());
+                                    Console.ForegroundColor = ConsoleColor.White;
+                                }
+                                results[4] = clean4json(((ChassisID)tlv).ToString());
+                            }
+                            /*if (tlv.GetType().Equals(typeof(PortID)))
                             {
                                 Console.ForegroundColor = ConsoleColor.Cyan;
-                                Console.WriteLine("Port: " + ((PortDescription)tlv).Description );
+                                Console.WriteLine("PortID: " + ((PortID)tlv).ToString());
                                 Console.ForegroundColor = ConsoleColor.White;
+                            }*/
+                            if (tlv.GetType().Equals(typeof(PortDescription)))
+                            {
+                                //Console.ForegroundColor = ConsoleColor.Cyan;
+                                if (opt_json != true) Console.WriteLine("Port: " + ((PortDescription)tlv).Description );
+                                results[2] = clean4json(((PortDescription)tlv).Description.ToString().Trim());
+                                //Console.ForegroundColor = ConsoleColor.White;
                             }
                             if (tlv.GetType().Equals(typeof(SystemName)))
                             {
-                                Console.WriteLine(((SystemName)tlv).Name );
+                                if(opt_json != true) Console.WriteLine("Name: " + ((SystemName)tlv).Name );
+                                results[1] = clean4json(((SystemName)tlv).Name.ToString().Trim());
                             }
                             if (tlv.GetType().Equals(typeof(SystemDescription)))
                             {
+                                /*
                                 Console.ForegroundColor = ConsoleColor.Gray;
-                                Console.WriteLine(((SystemDescription)tlv).Description);
+                                Console.WriteLine("Description: " + ((SystemDescription)tlv).Description);
                                 Console.ForegroundColor = ConsoleColor.White;
+                                */
+                                results[3] = clean4json(((SystemDescription)tlv).Description.ToString());
                             }
                             if (tlv.GetType().Equals(typeof(OrganizationSpecific)))
                             {
-                               // Console.WriteLine("\tO:\t" + ((OrganizationSpecific)tlv).OrganizationDefinedSubType.ToString());
+                               //Console.WriteLine("\tO:\t" + ((OrganizationSpecific)tlv).OrganizationDefinedSubType.ToString());
                             }
-                }
+                            
 
+                }
+                // Checking if all neccessary information is present, then quit.
+                if (results[1] != "" && results[2] != "")
+                {
+                    if (opt_json == true)
+                    {
+                        Console.WriteLine("{\"name\":\"" + results[1] + "\",\"port\":\"" + results[2] + "\",\"description\":\"" + results[3] + "\",\"chassisid\":\"" + results[4] + "\"}");
+                    }
+                    if (opt_quit == true) Environment.Exit(1);
+                }
             }
 
         }

@@ -32,7 +32,7 @@ namespace lldp
             
 
             // Print version
-            string build = "2017-09-11";
+            string build = "2017-09-12";
             string ver = SharpPcap.Version.VersionString;
             if (opt_json != true)
             {
@@ -150,8 +150,8 @@ namespace lldp
                 else
                 {
                     Console.WriteLine("WinPCAP library is missing, please install from:");
-                    Console.WriteLine("      win10x64:\thttps://www.winpcap.org");
-                    Console.WriteLine("      other:\thttps://www.winpcap.org\n");
+                    Console.WriteLine("\twin10x64:\twww.win10pcap.org\n");
+                    Console.WriteLine("\tother:\thttps://www.winpcap.org\n");
                     Environment.Exit(1);
                 }
             }
